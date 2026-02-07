@@ -1,7 +1,6 @@
 import React, { useState, useRef, useCallback, useMemo } from 'react';
-import { Download, RotateCcw, Users, CheckCircle2, Upload, Loader2, Menu, X } from 'lucide-react';
-import { GoogleGenAI, Type } from "@google/genai";
-import { INITIAL_STAFF, APPT_STAFF_IDS, SESSIONS } from './constants';
+import { Download, RotateCcw, Users, CheckCircle2 } from 'lucide-react';
+import { INITIAL_STAFF, SESSIONS } from './constants';
 import { StaffMember, RosterState, DragItem } from './types';
 import { Magnet } from './components/Magnet';
 import { RosterBoard } from './components/RosterBoard';
@@ -20,10 +19,6 @@ export default function App() {
   const selectedStaffMember = useMemo(() => 
     staffList.find(s => s.id === selectedStaffId), 
   [selectedStaffId, staffList]);
-
-  // Auto-Draft State
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Helper to get staff by role (allows multiple assignments)
   const getStaffByRole = useCallback((role: 'PT' | 'Support') => {
@@ -57,182 +52,6 @@ export default function App() {
       return { valid: false, error: "Support staff (PCA) cannot be placed in PT columns." };
     }
     return { valid: true };
-  };
-
-  // --- Gemini Auto-Draft Handler ---
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setIsAnalyzing(true);
-    try {
-      // 1. Convert to Base64
-      const base64Data = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const result = reader.result as string;
-          const base64 = result.split(',')[1];
-          resolve(base64);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-
-      // 2. Call Gemini API
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: {
-          parts: [
-             { inlineData: { mimeType: file.type, data: base64Data } },
-             { text: `
-               Analyze this roster image. 
-               Identify staff members who have duties labeled as 'Orth', 'Ortho', or are highlighted in green in columns 1, 2, 3, or 4.
-               Return a JSON object containing a list of these staff members and the specific session numbers (1, 2, 3, 4) they are assigned to.
-               Ignore any staff who do not have 'Orth' duties.
-             ` }
-          ]
-        },
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              assignments: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    name: { type: Type.STRING },
-                    sessions: { 
-                      type: Type.ARRAY, 
-                      items: { type: Type.INTEGER } 
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      });
-
-      // 3. Process Response
-      const result = JSON.parse(response.text);
-      if (!result.assignments || !Array.isArray(result.assignments)) {
-         throw new Error("Invalid response format");
-      }
-
-      // 4. Logic for distributing teams
-      const apptStaffAssignments: { staff: StaffMember; sessions: number[] }[] = [];
-      const rptStaffAssignments: { staff: StaffMember; sessions: number[] }[] = [];
-
-      // Categorize extracted staff
-      result.assignments.forEach((assignment: any) => {
-        const staff = staffList.find(s => s.name.toLowerCase() === assignment.name.trim().toLowerCase());
-        if (staff && staff.role === 'PT') {
-           if (APPT_STAFF_IDS.includes(staff.id)) {
-             apptStaffAssignments.push({ staff, sessions: assignment.sessions });
-           } else {
-             rptStaffAssignments.push({ staff, sessions: assignment.sessions });
-           }
-        }
-      });
-
-      // Distribute APPT staff
-      const team1Appts: typeof apptStaffAssignments = [];
-      const team2Appts: typeof apptStaffAssignments = [];
-      let nextApptTeam = Math.random() < 0.5 ? 1 : 2; 
-
-      apptStaffAssignments.forEach(item => {
-        if (team1Appts.length < team2Appts.length) {
-          team1Appts.push(item);
-        } else if (team2Appts.length < team1Appts.length) {
-           team2Appts.push(item);
-        } else {
-           if (nextApptTeam === 1) {
-             team1Appts.push(item);
-             nextApptTeam = 2;
-           } else {
-             team2Appts.push(item);
-             nextApptTeam = 1;
-           }
-        }
-      });
-
-      // Distribute RPT staff
-      const team1Rpts: typeof rptStaffAssignments = [];
-      const team2Rpts: typeof rptStaffAssignments = [];
-      const team1HasAppt = team1Appts.length > 0;
-      const team2HasAppt = team2Appts.length > 0;
-      let nextRptTeam = Math.random() < 0.5 ? 1 : 2;
-
-      rptStaffAssignments.forEach(item => {
-        const canJoinTeam1 = team1HasAppt;
-        const canJoinTeam2 = team2HasAppt;
-
-        if (canJoinTeam1 && !canJoinTeam2) {
-           team1Rpts.push(item);
-        } else if (!canJoinTeam1 && canJoinTeam2) {
-           team2Rpts.push(item);
-        } else if (canJoinTeam1 && canJoinTeam2) {
-           if (team1Rpts.length < team2Rpts.length) {
-             team1Rpts.push(item);
-           } else if (team2Rpts.length < team1Rpts.length) {
-             team2Rpts.push(item);
-           } else {
-             if (nextRptTeam === 1) {
-                team1Rpts.push(item);
-                nextRptTeam = 2;
-             } else {
-                team2Rpts.push(item);
-                nextRptTeam = 1;
-             }
-           }
-        } else {
-           if (team1Rpts.length <= team2Rpts.length) {
-             team1Rpts.push(item);
-           } else {
-             team2Rpts.push(item);
-           }
-        }
-      });
-
-      // 5. Build Roster State
-      const newRoster = { ...roster };
-      const sessionMap: Record<number, string> = { 1: '1st', 2: '2nd', 3: '3rd', 4: '4th' };
-      let addedCount = 0;
-
-      const addToRoster = (items: typeof apptStaffAssignments, columnId: string) => {
-         items.forEach(({ staff, sessions }) => {
-            sessions.forEach(sessNum => {
-               const sessionKey = sessionMap[sessNum];
-               if (sessionKey) {
-                 const cellId = `${sessionKey}-${columnId}`;
-                 const current = newRoster[cellId] || [];
-                 if (!current.includes(staff.id)) {
-                   newRoster[cellId] = [...current, staff.id];
-                   addedCount++;
-                 }
-               }
-            });
-         });
-      };
-
-      addToRoster(team1Appts, 'T1_PTI');
-      addToRoster(team2Appts, 'T2_PTI');
-      addToRoster(team1Rpts, 'T1_PTII');
-      addToRoster(team2Rpts, 'T2_PTII');
-      
-      setRoster(newRoster);
-      alert(`Draft generated! Added ${addedCount} assignments.`);
-
-    } catch (error) {
-      console.error("Error generating roster:", error);
-      alert("Failed to analyze image. Please try again or use a clearer image.");
-    } finally {
-      setIsAnalyzing(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
   };
 
   // --- Drag / Click Handlers ---
@@ -361,24 +180,12 @@ export default function App() {
     if (window.confirm('Are you sure you want to clear the entire roster?')) {
       setRoster({});
       setSelectedStaffId(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
     }
   };
 
   return (
     <div className="h-screen bg-gray-50 flex flex-col md:flex-row font-sans text-gray-900 overflow-hidden">
       
-      {/* Hidden File Input */}
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleFileUpload}
-        accept="image/jpeg,image/png,image/webp"
-        className="hidden"
-      />
-
       {/* --- HIDDEN EXPORT BOARD --- */}
       {/* This board is always rendered as 1280px wide Desktop layout, used solely for generating the JPG */}
       <div 
@@ -434,14 +241,6 @@ export default function App() {
         </div>
 
         <div className="p-4 bg-white border-t border-gray-200 flex flex-col gap-2">
-          <button 
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isAnalyzing}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
-          >
-            {isAnalyzing ? <Loader2 className="animate-spin w-4 h-4" /> : <Upload className="w-4 h-4" />} 
-            Draft from Image
-          </button>
           <div className="flex gap-2">
             <button 
               type="button" 
@@ -496,9 +295,6 @@ export default function App() {
           {/* Action Bar */}
           <div className="flex items-center justify-between p-2 border-b border-gray-100 bg-gray-50">
              <div className="flex gap-2">
-                <button onClick={() => fileInputRef.current?.click()} className="p-2 bg-emerald-600 text-white rounded shadow-sm">
-                   {isAnalyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                </button>
                 <button 
                   type="button" 
                   onClick={handleReset} 

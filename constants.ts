@@ -74,9 +74,3 @@ export const COLUMNS: { id: ColumnId; label: string; group?: 'Team 1' | 'Team 2'
   { id: 'T2_PTII', label: 'RPT', group: 'Team 2' },
   { id: 'PCA', label: 'PCA', group: 'PCA' },
 ];
-
-export const APPT_STAFF_IDS = [
-  'agnes', 'andrew', 'ashley', 'elaine', 'eric', 'henry', 'hy', 'jamie', 'jessie', 
-  'karen_pt', 'leo', 'leon_y', 'm_chan', 'michelle_h', 'peter', 'richard', 
-  'stephy', 't_chan', 't_mak', 'victor', 'yan', 'yannie'
-];
